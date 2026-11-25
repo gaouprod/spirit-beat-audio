@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+tracks.json
+lyrics-results.json
+remaster-out/
+pub/

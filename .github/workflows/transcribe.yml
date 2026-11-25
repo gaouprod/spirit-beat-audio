@@ -1,0 +1,97 @@
+# Transcription des paroles chantées pour SPIRIT-BEAT (transcribe.py).
+#
+# Dépôt PUBLIC (minutes GitHub Actions gratuites) : le workflow ne reçoit que
+# des identifiants de morceaux. Les adresses audio sont demandées à
+# SPIRIT-BEAT et masquées ; les paroles ne sortent jamais dans le journal,
+# elles sont renvoyées à POST <SPIRIT-BEAT>/api/pipeline/lyrics.
+# Secret de dépôt : PIPELINE_SECRET (= variable PIPELINE_SECRET de SPIRIT-BEAT sur Vercel).
+# Variable de dépôt facultative : SPIRIT_BEAT_URL (défaut https://spirit-beat.vercel.app).
+name: Transcription des paroles
+
+on:
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "Identifiants des morceaux SPIRIT-BEAT, séparés par des virgules"
+        required: true
+      shards:
+        description: "Nombre de jobs en parallèle (1 à 8)"
+        default: "8"
+      callback:
+        description: "Renvoyer les paroles à SPIRIT-BEAT (true/false)"
+        default: "true"
+      model:
+        description: "Modèle faster-whisper"
+        default: "large-v3-turbo"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: github.repository == 'gaouprod/spirit-beat-audio'
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - id: plan
+        env:
+          SHARDS: ${{ inputs.shards }}
+          IDS: ${{ inputs.ids }}
+        run: |
+          n=$(python3 -c "import os; ids=[i for i in os.environ['IDS'].split(',') if i.strip()]; n=int(os.environ.get('SHARDS') or 8); print(max(1, min(n, 8, len(ids) or 1)))")
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          echo "shards=$(python3 -c "print(list(range($n)))")" >> "$GITHUB_OUTPUT"
+
+  transcribe:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      SPIRIT_BEAT_URL: ${{ vars.SPIRIT_BEAT_URL || 'https://spirit-beat.vercel.app' }}
+      PIPELINE_SECRET: ${{ secrets.PIPELINE_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Morceaux à traiter
+        env:
+          IDS: ${{ inputs.ids }}
+          OUT_FILE: tracks.json
+        run: python fetch_tracks.py
+      - name: Dépendances (CPU)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install --quiet "torch==2.1.2" "torchaudio==2.1.2" --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet "demucs==4.0.1" "faster-whisper==1.1.1" soundfile requests "numpy<2"
+      - name: Transcription
+        env:
+          TRACKS_FILE: tracks.json
+          MODEL: ${{ inputs.model }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ needs.plan.outputs.count }}
+          RESULTS_FILE: lyrics-results.json
+        run: python transcribe.py
+      - name: Retour à SPIRIT-BEAT
+        if: ${{ always() && inputs.callback == 'true' }}
+        env:
+          IDS: ${{ inputs.ids }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ needs.plan.outputs.count }}
+        run: |
+          # Script tombé avant d'écrire ses résultats : on signale l'échec morceau par
+          # morceau, sinon SPIRIT-BEAT attendrait la transcription pendant des heures.
+          if [ ! -s lyrics-results.json ]; then
+            python3 -c "import json,os; t=json.load(open('tracks.json')) if os.path.exists('tracks.json') else [{'id':i} for i in os.environ.get('IDS','').split(',') if i]; s,n=int(os.environ['SHARD']),int(os.environ['SHARDS']); json.dump({'results':[{'id':x['id'],'error':'workflow de transcription en échec'} for i,x in enumerate(t) if i%n==s]},open('lyrics-results.json','w'))"
+          fi
+          curl --fail-with-body -sS -o /dev/null -w "retour SPIRIT-BEAT : HTTP %{http_code}\n" --retry 3 --retry-all-errors --max-time 120 \
+            -X POST "${SPIRIT_BEAT_URL%/}/api/pipeline/lyrics" \
+            -H "Authorization: Bearer $PIPELINE_SECRET" \
+            -H "Content-Type: application/json" \
+            --data-binary @lyrics-results.json

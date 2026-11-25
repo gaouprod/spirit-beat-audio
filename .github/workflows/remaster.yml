@@ -1,0 +1,72 @@
+# Remastering « gros studio électro » pour SPIRIT-BEAT (remaster/remaster.py).
+#
+# Dépôt PUBLIC : le workflow ne reçoit que des identifiants de morceaux.
+# L'audio remasterisé et le rapport ne sont JAMAIS publiés ici : ils vont dans
+# la Release privée « remaster-prototype » du dépôt SPIRIT-BEAT.
+# Secrets de dépôt : PIPELINE_SECRET ; RELEASE_TOKEN (jeton à droit
+# « Contents : écriture » sur gaouprod/SPIRIT-BEAT uniquement).
+name: Remastering
+
+on:
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "Identifiants des morceaux SPIRIT-BEAT, séparés par des virgules"
+        required: true
+      stems:
+        description: "Séparer en pistes avec Demucs (1/0)"
+        default: "1"
+      target_lufs:
+        description: "Volume cible (LUFS)"
+        default: "-9"
+
+permissions:
+  contents: read
+
+jobs:
+  remaster:
+    if: github.repository == 'gaouprod/spirit-beat-audio'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Morceaux à traiter
+        env:
+          IDS: ${{ inputs.ids }}
+          OUT_FILE: tracks.json
+          SPIRIT_BEAT_URL: ${{ vars.SPIRIT_BEAT_URL || 'https://spirit-beat.vercel.app' }}
+          PIPELINE_SECRET: ${{ secrets.PIPELINE_SECRET }}
+        run: python fetch_tracks.py
+      - name: Dépendances (CPU)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install --quiet "torch==2.1.2" "torchaudio==2.1.2" --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet -r remaster/requirements.txt
+      - name: Remastering
+        env:
+          TRACKS_FILE: tracks.json
+          STEMS: ${{ inputs.stems }}
+          TARGET_LUFS: ${{ inputs.target_lufs }}
+          OUT_DIR: remaster-out
+        run: python remaster/remaster.py
+      - name: Publication (Release privée de SPIRIT-BEAT)
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TARGET: gaouprod/SPIRIT-BEAT
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::error::Secret RELEASE_TOKEN absent"; exit 1; fi
+          mkdir -p pub
+          for d in remaster-out/*/; do
+            id=$(basename "$d")
+            for f in "$d"*.mp3 "$d"recette.json; do
+              [ -f "$f" ] && cp "$f" "pub/${id}--$(basename "$f")"
+            done
+          done
+          gh release view remaster-prototype --repo "$TARGET" >/dev/null 2>&1 || \
+            gh release create remaster-prototype --repo "$TARGET" --prerelease --title "Remastering (prototype)" --notes "En cours de publication…"
+          gh release edit remaster-prototype --repo "$TARGET" --notes-file remaster-out/RAPPORT.md
+          gh release upload remaster-prototype --repo "$TARGET" pub/* --clobber
+          echo "Résultats publiés dans la Release privée de SPIRIT-BEAT." >> "$GITHUB_STEP_SUMMARY"
