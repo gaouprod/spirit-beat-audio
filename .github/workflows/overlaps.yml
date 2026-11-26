@@ -1,0 +1,64 @@
+# Repères Overlap IN / Overlap OUT pour LiveRégie (overlaps/detect.py).
+#
+# Lancé par SPIRIT-BEAT après l'analyse de chaque morceau sans repères, ou à la
+# main (rattrapage). Dépôt PUBLIC (minutes GitHub Actions gratuites) : le
+# workflow ne reçoit que des identifiants ; les adresses audio sont demandées à
+# SPIRIT-BEAT et masquées ; le résultat (des nombres) repart à
+# POST <SPIRIT-BEAT>/api/pipeline/overlaps, qui n'écrase jamais un repère déjà réglé.
+# Secret de dépôt : PIPELINE_SECRET. Variable facultative : SPIRIT_BEAT_URL.
+name: Repères Overlap IN/OUT
+
+on:
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "Identifiants des morceaux SPIRIT-BEAT, séparés par des virgules"
+        required: true
+      callback:
+        description: "Renvoyer les repères à SPIRIT-BEAT (true/false)"
+        default: "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: overlaps-${{ inputs.ids }}
+  cancel-in-progress: false
+
+jobs:
+  overlaps:
+    if: github.repository == 'gaouprod/spirit-beat-audio'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SPIRIT_BEAT_URL: ${{ vars.SPIRIT_BEAT_URL || 'https://spirit-beat.vercel.app' }}
+      PIPELINE_SECRET: ${{ secrets.PIPELINE_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: overlaps/requirements.txt
+      - name: Morceaux à traiter
+        env:
+          IDS: ${{ inputs.ids }}
+          OUT_FILE: tracks.json
+        run: python fetch_tracks.py
+      - name: Dépendances
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install --quiet -r overlaps/requirements.txt
+      - name: Détection
+        env:
+          TRACKS_FILE: tracks.json
+          RESULTS_FILE: overlaps-results.json
+        run: python overlaps/run.py
+      - name: Retour à SPIRIT-BEAT
+        if: ${{ inputs.callback == 'true' }}
+        run: |
+          curl --fail-with-body -sS -w "\nretour SPIRIT-BEAT : HTTP %{http_code}\n" --retry 3 --retry-all-errors --max-time 120 \
+            -X POST "${SPIRIT_BEAT_URL%/}/api/pipeline/overlaps" \
+            -H "Authorization: Bearer $PIPELINE_SECRET" \
+            -H "Content-Type: application/json" \
+            --data-binary @overlaps-results.json

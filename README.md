@@ -23,6 +23,10 @@ musique, ni paroles, ni code de l'application.
 
 - `transcribe.yml` — lancé automatiquement par SPIRIT-BEAT après chaque analyse.
 - `remaster.yml` — prototype de remastering propre à chaque morceau.
+- `overlaps.yml` — repères **Overlap IN / Overlap OUT** de LiveRégie (premier kick,
+  temps qui suit le dernier groove), lancé par SPIRIT-BEAT après l'analyse de chaque
+  morceau qui n'en a pas ; résultat renvoyé à `POST /api/pipeline/overlaps`, qui
+  n'écrase jamais un repère déjà réglé. Méthode et banc de mesure : `overlaps/detect.py`.
 
 ## Réglages (Settings → Secrets and variables → Actions)
 
