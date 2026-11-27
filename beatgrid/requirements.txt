@@ -1,0 +1,9 @@
+# beat_this (temps et premiers temps de mesure) sur torch CPU : mêmes paquets que le
+# workflow « Grille rythmique » de SPIRIT-BEAT (éprouvé le 2026-11-27). Torch et
+# beat_this sont installés à part par le workflow (index CPU de PyTorch, archive GitHub).
+numpy<2
+librosa
+soundfile
+soxr
+einops
+rotary-embedding-torch
