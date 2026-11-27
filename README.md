@@ -27,6 +27,14 @@ musique, ni paroles, ni code de l'application.
   temps qui suit le dernier groove), lancé par SPIRIT-BEAT après l'analyse de chaque
   morceau qui n'en a pas ; résultat renvoyé à `POST /api/pipeline/overlaps`, qui
   n'écrase jamais un repère déjà réglé. Méthode et banc de mesure : `overlaps/detect.py`.
+- `beatgrid.yml` — **grille rythmique** des morceaux (temps et premiers temps de mesure
+  détectés par beat_this, début et fin du son, profil d'énergie des débuts et fins),
+  pour les enchaînements calés sur le temps des séances 40fit. Lancé par SPIRIT-BEAT
+  après l'analyse de chaque morceau sans grille beat_this (musique et morceaux réservés
+  aux séances) ; résultat renvoyé à `POST /api/pipeline/beatgrid`, qui ne remplace jamais
+  une grille d'un moteur plus précis. Calcul identique au worker d'analyse de SPIRIT-BEAT
+  (`beatgrid/worker_grid.py`, copie conforme de `workers/audio/spirit_audio_worker/beat_grid.py`).
+  Rattrapage : Actions → Grille rythmique → Run workflow, avec les identifiants.
 
 ## Réglages (Settings → Secrets and variables → Actions)
 
